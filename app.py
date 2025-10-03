@@ -1,35 +1,3 @@
-
-import streamlit as st
-import pandas as pd
-
-st.title("🎯 Lead Scoring Prediction App")
-
-st.write("Upload a CSV file of new leads to predict conversion probability")
-
-uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"])
-
-if uploaded_file is not None:
-    new_leads = pd.read_csv(uploaded_file)
-    st.write("Uploaded Data:")
-    st.dataframe(new_leads.head())
-
-    # Encode and scale (reuse preprocessing pipeline)
-    for col in ['Email_Source','Contacted','Location','Profession','Course_Interest']:
-        new_leads[col] = le.fit_transform(new_leads[col])
-    new_scaled = scaler.transform(new_leads)
-
-    # Predict scores
-    scores = best_model.predict_proba(new_scaled)[:,1]
-    new_leads['Lead_Score'] = scores
-    new_leads = new_leads.sort_values(by='Lead_Score', ascending=False)
-
-    st.write("### Predicted Lead Scores")
-    st.dataframe(new_leads[['Lead_Score'] + [col for col in new_leads.columns if col != 'Lead_Score']])
-
-    # Download option
-    csv = new_leads.to_csv(index=False).encode('utf-8')
-    st.download_button("Download Results", csv, "Lead_Scoring_Results.csv", "text/csv")
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -161,7 +129,7 @@ with st.form("single_lead_form"):
             # 1. Encode Categorical Data
             processed_data = input_data.copy()
             for col in CATEGORICAL_FEATURES.keys():
-                # FIX: Use the specific LabelEncoder from the dictionary for this column
+                # Use the specific LabelEncoder from the dictionary for this column
                 le_instance = label_encoders[col]
                 input_value = processed_data[col].iloc[0]
 
@@ -191,10 +159,10 @@ with st.form("single_lead_form"):
             st.markdown(f"**Conversion Probability (Lead Score):**")
             st.metric("", f"{score:.2f} ({(score * 100):.0f}%)")
 
-            if score > 0.5:
+            if score > 0.7:
                 st.balloons()
                 st.info("🔥 High Priority Lead! Assign immediately to sales for follow-up.")
-            elif score > 0.3:
+            elif score > 0.4:
                 st.info("⭐ Medium Priority Lead. Nurture with targeted content.")
             else:
                 st.info("🐢 Low Priority Lead. Keep in the general pool.")
@@ -216,52 +184,73 @@ if uploaded_file is not None:
     st.dataframe(new_leads.head())
 
     try:
-        # Preprocessing on Batch Data
-        processed_leads = new_leads.copy()
+        # Create copies for safe manipulation
+        df_for_display = new_leads.copy()
+        df_for_model = new_leads.copy()
         
-        # 1. Encode and Scale
+        # 1. Prepare DataFrames for Display (Text) and Model (Numeric)
         for col in CATEGORICAL_FEATURES.keys():
-            # FIX: Use the specific LabelEncoder for this column
             le_instance = label_encoders[col]
             
-            if col in processed_leads.columns:
-                # Apply transformation to the entire column
-                processed_leads[col] = processed_leads[col].apply(
+            if col in df_for_model.columns:
+                
+                # Check if the column is numeric (i.e., it was pre-encoded in the uploaded file)
+                if pd.api.types.is_numeric_dtype(df_for_model[col]):
+                    
+                    # FIX: Inverse transform the display DataFrame to text labels
+                    try:
+                        df_for_display[col] = le_instance.inverse_transform(df_for_display[col].astype(int))
+                        # Use the newly converted text labels for model preparation
+                        df_for_model[col] = df_for_display[col]
+                    except ValueError:
+                        # This happens if the numeric values are outside the fitted range (e.g., 99 but only 5 classes exist)
+                        st.warning(f"Column '{col}' is numeric but contains values outside the expected range. Using numerical values directly for prediction input, but output may be inconsistent.")
+                        # If inverse transform fails, we will proceed with encoding the existing numeric values below (which will fail if the model expects one-hot, but should pass with LabelEncoding)
+                        pass
+                
+                # 1b. Encode df_for_model (must be done even if originally text to ensure correct numerical sequence)
+                # Apply transformation to the entire column, mapping unknown values to the last fitted class
+                df_for_model[col] = df_for_model[col].apply(
                     lambda x: le_instance.transform([x])[0] if x in le_instance.classes_ else le_instance.transform([le_instance.classes_[-1]])[0]
                 )
             else:
                 st.warning(f"Feature column '{col}' missing from uploaded file. Assuming default category.")
-                processed_leads[col] = le_instance.transform([le_instance.classes_[-1]])[0] * len(processed_leads)
+                # Set both display and model columns to the encoded 'Other' category
+                default_encoded_value = le_instance.transform([le_instance.classes_[-1]])[0]
+                df_for_model[col] = default_encoded_value * len(df_for_model)
+                df_for_display[col] = le_instance.classes_[-1] # Display the text label for the default
 
-
-        # Ensure numerical columns are present before scaling
-        if all(col in processed_leads.columns for col in NUMERICAL_COLS):
-            scaled_batch = scaler.transform(processed_leads[NUMERICAL_COLS].values)
+        # 2. Ensure numerical columns are present and scale df_for_model
+        if all(col in df_for_model.columns for col in NUMERICAL_COLS):
+            scaled_batch = scaler.transform(df_for_model[NUMERICAL_COLS].values)
         else:
             raise ValueError(f"Uploaded CSV is missing required numerical columns: {NUMERICAL_COLS}")
         
         # Reconstruct the feature matrix
-        encoded_categorical_batch = processed_leads[CATEGORICAL_FEATURES.keys()].values
+        encoded_categorical_batch = df_for_model[CATEGORICAL_FEATURES.keys()].values
         final_batch_features = np.hstack([encoded_categorical_batch, scaled_batch])
 
-        # 2. Predict scores
+        # 3. Predict scores and assign to the DISPLAY DataFrame
+        # Equivalent to: lead_scores = best_model.predict_proba(X_scaled)[:,1]
         scores = best_model.predict_proba(final_batch_features)[:, 1]
+        df_for_display['Lead_Score'] = scores
         
-        # 3. Add score and sort
-        new_leads['Lead_Score'] = scores
-        new_leads = new_leads.sort_values(by='Lead_Score', ascending=False)
+        # 4. Sort and display
+        # Equivalent to: ranked_leads = data.sort_values(by='Lead_Score', ascending=False)
+        df_for_display = df_for_display.sort_values(by='Lead_Score', ascending=False)
 
         st.write("### Predicted Lead Scores (Ranked)")
-        score_df = new_leads[['Lead_Score'] + [col for col in new_leads.columns if col not in ['Lead_Score', 'Name', 'Lead_ID', 'Converted']]]
+        # Select the relevant columns for display (Similar to: ranked_leads[['Lead_ID','Lead_Score','Converted']].head(20))
+        score_df = df_for_display[['Lead_Score'] + [col for col in df_for_display.columns if col not in ['Lead_Score', 'Name', 'Lead_ID', 'Converted']]]
         st.dataframe(score_df)
 
-        # Download option
+        # Download option (Equivalent to: ranked_leads.to_csv("Lead_Scoring_Output.csv", index=False))
         @st.cache_data
         def convert_df(df):
             # Cache the conversion to prevent computation on every rerun
             return df.to_csv(index=False).encode('utf-8')
 
-        csv = convert_df(new_leads) # Download the full results with all original columns
+        csv = convert_df(df_for_display) # Download the full results with all original columns (now text)
         st.download_button(
             "Download Full Results CSV",
             csv,
@@ -271,5 +260,4 @@ if uploaded_file is not None:
         )
 
     except Exception as e:
-        st.error(f"Error processing batch file. Check if the CSV columns and data types match the expected training features. Details: {e}")
-
+        st.error(f"Error processing batch file. Please check if the CSV columns and data types match the expected features. Details: {e}")
