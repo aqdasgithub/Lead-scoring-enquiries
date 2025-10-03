@@ -159,7 +159,7 @@ with st.form("single_lead_form"):
             st.markdown(f"**Conversion Probability (Lead Score):**")
             st.metric("", f"{score:.2f} ({(score * 100):.0f}%)")
 
-            if score > 0.7:
+            if score > 0.5:
                 st.balloons()
                 st.info("🔥 High Priority Lead! Assign immediately to sales for follow-up.")
             elif score > 0.4:
@@ -261,3 +261,4 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Error processing batch file. Please check if the CSV columns and data types match the expected features. Details: {e}")
+
