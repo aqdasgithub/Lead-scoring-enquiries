@@ -106,7 +106,7 @@ with st.form("single_lead_form"):
         follow_up_count = st.number_input(
             "Follow Up Count", 
             min_value=0, 
-            max_value=10, 
+            max_value=5, 
             value=2, 
             step=1
         )
@@ -261,4 +261,5 @@ if uploaded_file is not None:
 
     except Exception as e:
         st.error(f"Error processing batch file. Please check if the CSV columns and data types match the expected features. Details: {e}")
+
 
